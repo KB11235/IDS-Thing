@@ -1,0 +1,560 @@
+---
+title: "IDS investigation worksheet"
+author: "KESC: Kirin Bhatnagar (s2778182), Elif Naz Kartal (s2791458), Shaun Gallacher (s2830596), & Collin Megson (s2829727)"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+**Note:** You can use this file as you 'working document' where you can try out various investigation ideas and keep notes about your findings. How you use and structure this file is up to you. It is recommended that you keep notes about what you are investigating and what you find as this will make the process of creating your presentation and report easier. Please note that you *do not* need to submit this file as part of your group project.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load-lib, message = FALSE}
+
+# Needed for mapping
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+
+# Libraries
+library(tidyverse)
+library(tidymodels)
+library(sf)
+library(readxl)
+
+```
+
+```{r loading data}
+
+# ca = council authority
+# hbr = health board of residence
+# EASR = standard rate for 100,000 people in the EU
+activity_by_ca <- read.csv("data/hd_activitybyca.csv")
+activity_by_hbr <- read.csv("data/hd_activitybyhbr.csv")
+mortality_by_ca <- read.csv("data/hd_mortalitybyca.csv")
+mortality_by_hbr <- read.csv("data/hd_mortalitybyhbr.csv")
+
+# Source: https://data.spatialhub.scot/dataset/local_authority_boundaries-is/resource/d24c5735-0f1c-4819-a6bd-dbfeb93bd8e4
+# Source for map must be cited in project
+# Can also be found on a uk government website
+
+
+# Retreiving scotland map with CAs
+
+shapefile_path <- "data/Local_Authority_Boundaries_-_Scotland"
+map <- st_read(shapefile_path)
+mortality_ca_map <- st_read(shapefile_path)
+
+```
+
+Note that number of deaths and crude rate is na for any grouping of age other than "All"
+
+```{r tidying}
+
+#Selecting columns from mortality_by_ca
+mortality_by_ca <- select(mortality_by_ca, Year, CA, AgeGroup, Sex, Diagnosis, NumberOfDeaths, CrudeRate, EASR)
+
+#Filter out non-specific CAs
+mortality_by_ca <- mortality_by_ca %>% filter(CA != "S92000003" & is.na(CA) == FALSE)
+
+# Joining to complete map
+mortality_ca_map <- left_join(mortality_by_ca, mortality_ca_map, by = c("CA" = "code"))
+mortality_ca_map <- st_as_sf(mortality_ca_map, sf_column_name = "geometry")
+# Note some areas have multiple data
+
+#Creates new variable to be predicted
+mortality_ca_map <- mortality_ca_map %>% mutate(
+  deviance = CrudeRate - EASR
+)
+
+#Drops na for crude rate, should result in only 
+mortality_ca_map <- mortality_ca_map %>% filter(is.na(CrudeRate)== FALSE)
+
+#Looks at non-aged data and non-sexed data (inherent in EASR)
+mortality_ca_map <- mortality_ca_map %>% filter(AgeGroup == "All", Sex == "All")
+
+
+
+#Turns year into factor for dummy variable
+mortality_ca_map <- mortality_ca_map %>% mutate(
+  Year = as.factor(Year)
+)
+
+#Mutate into size types
+map <- map %>% mutate(
+  size_type = case_when(
+    hectares<30000 ~ "small",
+    hectares>30000 & hectares<90000 ~ "medium",
+    hectares>90000 & hectares<300000 ~ "large",
+    hectares>300000 ~ "very large"
+  )
+)
+
+mortality_ca_map <- mortality_ca_map %>% mutate(
+  size_type = case_when(
+    hectares<30000 ~ "small",
+    hectares>30000 & hectares<90000 ~ "medium",
+    hectares>90000 & hectares<300000 ~ "large",
+    hectares>300000 ~ "very large"
+  )
+)
+
+#creates id
+mortality_ca_map <- mortality_ca_map %>%
+  mutate(id = row_number())
+```
+
+```{r example map visualizations}
+# Use theme: theme(line = element_blank(),axis.text = element_blank(), panel.grid = element_line(color = "transparent"), panel.background = element_rect(fill='transparent'))
+
+general_mortality_ca_exp <- mortality_ca_map %>% filter(Sex == "All", AgeGroup == "All", Year == "2018", Diagnosis == "Coronary Heart Disease") 
+
+ggplot(general_mortality_ca_exp) + facet_grid(~Diagnosis)+ geom_sf(aes(fill = CrudeRate-EASR)) + scale_fill_gradient(low = "green",high = "red")+ theme(line = element_blank(),axis.text = element_blank(), panel.grid = element_line(color = "transparent"), panel.background = element_rect(fill='transparent'))
+
+```
+
+Possible hypothesis about rural vs urban areas given that dataset now has land size. Or simply predicting across diseases based on area. Maybe if difference from european average is constant per disease type for each council area.
+
+```{r Example visualization}
+ggplot(filter(mortality_ca_map, Year == 2018)) + facet_grid(~Diagnosis)+ geom_sf(aes(fill = CrudeRate-EASR)) + scale_fill_gradient2(low = "green", mid = "white", high = "red")+ theme(line = element_blank(),axis.text = element_blank(), panel.grid = element_line(color = "transparent"), panel.background = element_rect(fill='transparent'))
+
+#CHD and Heart attack seem to have similar crude rate - EASR, while heart failure appears to be constant across all CAs, maybe we could categorize based on hectares into small medium and large council authorites and predict crude rate - EASR 
+```
+
+```{r Deviance visualization}
+
+#Create visualization that tracks deviance per year
+mortality_ca_map %>% filter(Sex == "All", AgeGroup == "All") %>% ggplot(mapping = aes(x= Diagnosis, y = deviance)) + facet_grid(~Year) + geom_boxplot()
+
+#There seems to be a considerable trend in deviance over the years, so we will factor it into the recipe, appears to be the same spread in deviance over the years, maybe do difference between deviance and average deviance for the year
+
+```
+
+
+```{r workflow creation}
+
+
+```
+
+```{r}
+#Error, does not have all geometry codes
+
+```
+
+```{r}
+
+map %>% ggplot(mapping = aes(x = hectares, y=0)) + geom_point()
+
+```
+
+```{r hbr }
+hbr_map <- st_read("data/SG_NHS_HealthBoards_2019.shp")
+
+names(hbr_map)
+
+mortality_hbr_map <- hbr_map %>%
+  left_join(mortality_by_hbr, by = c("HBCode" = "HBR")) %>%
+  st_as_sf(sf_column_name = "geometry")
+
+geom_sf_text(aes(label = HBName), parse = FALSE)
+
+general_mortality_hbr <- mortality_hbr_map %>% filter(Sex == "All", AgeGroup == "All", Year == "2018", Diagnosis == "Coronary Heart Disease")
+
+ggplot(general_mortality_hbr) +
+  geom_sf(aes(fill = CrudeRate)) +
+  theme(
+    line = element_blank(),
+    axis.text = element_blank(),
+    panel.grid = element_line(color = "transparent"),
+    panel.background = element_rect(fill = "transparent")
+  )
+```
+
+```{r}
+activity_by_hbr <- activity_by_hbr %>% 
+  filter(AgeGroup != "All" & HBR != "S92000003") 
+activity_by_hbr <- activity_by_hbr %>% 
+  mutate(Diagnosis = factor(
+    Diagnosis, 
+    levels = c(
+      "Coronary Heart Disease",
+      "Heart Attack",
+      "Heart Failure",
+      "Angina")), 
+    AgeGroup = factor(AgeGroup), 
+    Sex = factor(Sex)) 
+
+set.seed(1234) 
+activity_by_hbr_split <- initial_split(activity_by_hbr) 
+activity_by_hbr_train <- training(activity_by_hbr_split) 
+activity_by_hbr_test <- testing(activity_by_hbr_split) 
+diag_recipe <- recipe(Diagnosis ~ NumberOfDischarges + EASR, data = activity_by_hbr_train) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_zv(all_predictors()) %>% 
+  step_normalize(all_numeric_predictors()) 
+
+diag_model <- multinom_reg() %>% 
+  set_engine("nnet") 
+diag_wf <- workflow() %>% 
+  add_recipe(diag_recipe) %>% 
+  add_model(diag_model) 
+diag_fit <- diag_wf %>% fit(activity_by_hbr_train)
+
+glance(diag_fit)
+```
+
+```{r}
+diag_test_preds <- predict(diag_fit, new_data = activity_by_hbr_test, type = "prob") %>% 
+  bind_cols(activity_by_hbr_test) 
+
+diag_test_preds %>% 
+  roc_curve(truth = Diagnosis, starts_with(".pred_")) %>% 
+  autoplot() 
+
+diag_auc <- diag_test_preds %>% 
+  roc_auc(truth = Diagnosis, starts_with(".pred_")) 
+diag_auc
+```
+
+```{r}
+# In this section, we will be exploring the question "To what extent can age and sex be effective in predicting the crude rate of deaths due to coronary heart disease across Scotland?"
+
+# Filtering Data
+chd <- mortality_by_hbr %>%
+  filter(Diagnosis == "Coronary Heart Disease")
+
+# Splitting to Training and Testing
+set.seed(1234)
+chd_split <- initial_split(chd)
+chd_train <- training(chd_split)
+chd_test <- testing(chd_split)
+
+# Recipe
+chd_rec <- recipe(CrudeRate ~ AgeGroup + Sex, data = chd_train) %>%
+  step_dummy(all_nominal_predictors())
+
+# Since we are trying to predict a continuous outcome, we have to use linear regression.
+
+chd_mod <- linear_reg() %>%
+  set_engine("lm")
+
+chd_wf <- workflow() %>%
+  add_recipe(chd_rec) %>%
+  add_model(chd_mod)
+
+chd_fit <- chd_wf %>% fit(data = chd_train)
+
+chd_pred <- predict(chd_fit, chd_test) %>% bind_cols(chd_test)
+
+metrics(chd_pred, truth = CrudeRate, estimate = .pred)
+
+# What does this tell us? 
+
+# We can see that our R^2 is very high, which means that our explanatory variables (Age Group and Sex) explain around 95% of the variation in our response variable (Crude Rate).
+
+# The variation in the set of data is dominated by age group.
+
+# RMSE and MAE are very large as well. On average, the predictions of the model are off by between 49 and 73 deaths per 100,000 of the population, which is huge but reasonable due to the fact that crude rates increase a lot by age. 
+```
+
+```{r}
+# How much has the crude rate changed across age groups from 2010 to 2023? This is an intuitive question.
+
+# Grouping by Year and Age Group
+
+trend_over_years <- mortality_by_hbr %>%
+  group_by(Year, AgeGroup) %>%
+  summarise(
+    mean_crude_rate = mean(CrudeRate, na.rm = TRUE),
+    total_deaths = sum(NumberOfDeaths, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+# Plotting the Graph
+
+ggplot(trend_over_years,
+       aes(x = Year,
+           y = mean_crude_rate,
+           color = AgeGroup)) +
+  geom_line(size = 1) +
+  geom_point() +
+  labs(
+    title = "Trends in Crude Rate by Age Group",
+    x = "Year",
+    y = "Mean Crude Rate",
+    color = "Age Group"
+  ) +
+  theme_minimal()
+
+# Calculating Percentage Changes
+
+age_percentage_change <- trend_over_years %>%
+  group_by(AgeGroup) %>%
+  summarise(
+    start = mean_crude_rate[Year == min(Year)],
+    end = mean_crude_rate[Year == max(Year)],
+    percentage_change = ((end - start) / start) * 100
+  )
+
+age_percentage_change
+```
+
+```{r}
+# Does the crude rate change equally for men and women?
+
+sex_trends <- mortality_by_hbr %>%
+  group_by(Year, Sex) %>%
+  summarise(
+    mean_crude_rate = mean(CrudeRate, na.rm = TRUE),
+  ) %>%
+  ungroup()
+
+lm_men <- lm(mean_crude_rate ~ Year, data = filter(sex_trends, Sex == "Males"))
+
+lm_women <- lm(mean_crude_rate ~ Year, data = filter(sex_trends, Sex == "Females"))
+
+coef(lm_men)
+coef(lm_women)
+
+# Women have a more negative slope, which means that there is a faster decline. This is important to note!
+
+ggplot(sex_trends, aes(x = Year, y = mean_crude_rate, color = Sex)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    title = "Trends in Crude Rate by Sex",
+    y = "Mean Crude Rate",
+    x = "Year"
+  ) +
+  theme_minimal()
+
+#looking at the crude rate ind vs looking at the deviance
+#related responses.
+#discuss pros and cons of discussing each of them
+#highlight limitations of the model afterwards
+#many of them ae categorical for the deviance
+#crude rate other variables can be used
+
+# But I want to see how it changes as women and men get older not compare years.
+```
+
+```{r}
+age_sex_trends <- mortality_by_hbr %>%
+  group_by(AgeGroup, Sex) %>%
+  summarise(mean_crude_rate = mean(CrudeRate, na.rm = TRUE)) %>%
+  ungroup()
+
+age_sex_trends_filtered <- age_sex_trends %>%
+  filter(AgeGroup != "All" & AgeGroup != "under75 years")
+
+ggplot(age_sex_trends_filtered, aes(x = AgeGroup, y = mean_crude_rate, color = Sex, group = Sex)) +
+  geom_point() +
+  geom_line() +
+  labs(
+    title = "Average Crude Rate by Age Group and Sex",
+    x = "Age Group",
+    y = "Crude Rate"
+    ) +
+  theme_minimal()
+
+ggplot(age_sex_trends_filtered, aes(x = AgeGroup, y = mean_crude_rate, fill = Sex)) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Average Crude Rate by Age Group and Sex",
+    x = "Age Group",
+    y = "Crude Rate",
+    fill = "Sex"
+    ) +
+  theme_minimal()
+```
+
+```{r}
+
+map %>% ggplot() + geom_sf(aes(fill = size_type)) + theme(line = element_blank(),axis.text = element_blank(), panel.grid = element_line(color = "transparent"), panel.background = element_rect(fill='transparent'))
+
+#Splitting data
+set.seed(2323)
+mortality_ca_map_split <- initial_split(mortality_ca_map)
+mortality_ca_map_train <- training(mortality_ca_map_split)
+mortality_ca_map_test  <- testing(mortality_ca_map_split)
+
+mortality_ca_rec1 <- recipe(deviance ~ hectares + Diagnosis + Year, data = mortality_ca_map_train) %>% step_dummy(Diagnosis, Year)
+
+mortality_ca_rec2 <- recipe(deviance ~ size_type + Diagnosis + Year, data = mortality_ca_map_train) %>% step_dummy(Diagnosis, Year, size_type)
+
+mortality_ca_rec3 <- recipe(deviance ~ CA + Diagnosis + Year, data = mortality_ca_map_train) %>% step_dummy(Diagnosis, Year, CA)
+
+mortality_ca_mod <- linear_reg() %>% set_engine("lm")
+
+mortality_ca_workflow1 <- workflow() %>% add_model(mortality_ca_mod) %>% add_recipe(mortality_ca_rec1)
+
+mortality_ca_workflow2 <- workflow() %>% add_model(mortality_ca_mod) %>% add_recipe(mortality_ca_rec2)
+
+mortality_ca_workflow3 <- workflow() %>% add_model(mortality_ca_mod) %>% add_recipe(mortality_ca_rec3)
+
+ca_fit1 <- mortality_ca_workflow1 %>% fit(data = mortality_ca_map_train)
+ca_fit2 <- mortality_ca_workflow2 %>% fit(data = mortality_ca_map_train)
+ca_fit3 <- mortality_ca_workflow3 %>% fit(data = mortality_ca_map_train)
+
+glance(ca_fit1)
+glance(ca_fit2)
+glance(ca_fit3)
+
+#Creates prediction
+mortality_ca_pred1 <- predict(ca_fit1, mortality_ca_map_test, type = "numeric") %>% bind_cols(select(mortality_ca_map_test, deviance, local_auth, Diagnosis, Year, id)) %>% mutate(model = "1")
+
+mortality_ca_pred2 <- predict(ca_fit2, mortality_ca_map_test, type = "numeric") %>% bind_cols(select(mortality_ca_map_test, deviance, local_auth, Diagnosis, Year, id)) %>% mutate(model = "2")
+
+mortality_ca_pred3 <- predict(ca_fit3, mortality_ca_map_test, type = "numeric") %>% bind_cols(select(mortality_ca_map_test, deviance, local_auth, Diagnosis, Year, id)) %>% mutate(model = "3")
+
+
+#Binds model data together
+mortality_ca_pred <- bind_rows(mortality_ca_pred1, mortality_ca_pred2, mortality_ca_pred3)
+
+ggplot(data = mortality_ca_pred, mapping = aes(x = .pred, y = deviance-.pred)) + facet_grid(~model) + geom_point() + geom_hline(yintercept = 0)
+
+
+#Binds id and joins
+mortality_ca_pred_vis1 <- predict(ca_fit1, mortality_ca_map, type = "numeric") %>% bind_cols(select(mortality_ca_map, deviance, local_auth, Diagnosis, Year, geometry, id)) %>% mutate(model = "1")
+
+mortality_ca_pred_vis2 <- predict(ca_fit2, mortality_ca_map, type = "numeric") %>% bind_cols(select(mortality_ca_map, deviance, local_auth, Diagnosis, Year, geometry, id)) %>% mutate(model = "2")
+
+mortality_ca_pred_vis3 <- predict(ca_fit3, mortality_ca_map, type = "numeric") %>% bind_cols(select(mortality_ca_map, deviance, local_auth, Diagnosis, Year, geometry, id)) %>% mutate(model = "3")
+
+
+
+mortality_ca_pred_vis <- bind_rows(mortality_ca_pred_vis1, mortality_ca_pred_vis2, mortality_ca_pred_vis3, (mortality_ca_map %>% select(deviance, local_auth, Diagnosis, Year, geometry, id)%>% mutate(.pred = deviance, model ="0"))) %>% st_as_sf(sf_column_name = "geometry")
+
+mortality_ca_pred_vis %>% filter(Year == "2017") %>% ggplot() + facet_grid(Diagnosis ~ model)+  geom_sf(aes(fill = .pred)) + scale_fill_gradient2(low = "green", mid = "white", high = "red", na.value = "grey")+ theme(line = element_blank(),axis.text = element_blank(), panel.grid = element_line(color = "transparent"), panel.background = element_rect(fill='transparent'))
+```
+
+
+```{r more model evaluating}
+
+ggplot(data = mortality_ca_pred, mapping = aes(x = .pred, y = deviance-.pred)) + facet_grid(Diagnosis~model) + geom_point() + geom_hline(yintercept = 0)
+```
+
+```{r}
+
+library(tidymodels)
+library(sf)
+library(ggplot2)
+
+mortality_hbr_map_train <- mortality_hbr_map_train %>% filter(AgeGroup == "All" & Sex == "All")
+
+# Ensure EU_binary is a factor
+mortality_hbr_map <- mortality_hbr_map %>% 
+  mutate(EU_binary = ifelse(CrudeRate > EASR, 1, 0)) %>%
+  mutate(EU_binary = factor(EU_binary))
+
+# Split data (stratified to maintain positive/negative balance)
+set.seed(2323)
+mortality_hbr_map_split <- initial_split(mortality_hbr_map, strata = EU_binary)
+mortality_hbr_map_train <- training(mortality_hbr_map_split)
+mortality_hbr_map_test  <- testing(mortality_hbr_map_split)
+
+# Recipes
+mortality_hbr_rec1 <- recipe(EU_binary ~ hectares + Diagnosis + Year,
+                             data = mortality_hbr_map_train) %>%
+  step_dummy(all_nominal_predictors())
+
+
+# Logistic regression model
+mortality_hbr_mod <- logistic_reg() %>% set_engine("glm")
+
+# Workflows
+mortality_hbr_workflow1 <- workflow() %>% add_model(mortality_hbr_mod) %>% add_recipe(mortality_hbr_rec1)
+
+
+# Fit models
+hbr_fit1 <- mortality_hbr_workflow1 %>% fit(data = mortality_hbr_map_train)
+
+
+# Predict probabilities
+pred1 <- predict(hbr_fit1, mortality_hbr_map_test, type = "prob") %>% bind_cols(mortality_hbr_map_test)
+
+
+# ROC curves (positive class = 1, above EU average)
+roc1 <- roc_curve(pred1, truth = EU_binary, .pred_1, event_level = "second")
+
+
+# Plot ROC curves individually
+autoplot(roc1)
+
+
+# Compute AUCs
+mortality_auc1 <- pred1 %>% roc_auc(truth = EU_binary, .pred_1, event_level = "second")
+
+
+# Print AUCs
+mortality_auc1
+
+```
+```{r}
+library(tidymodels)
+library(sf)
+library(ggplot2)
+
+# Ensure EU_binary is a factor
+mortality_ca_map <- mortality_ca_map %>% 
+  mutate(EU_binary = ifelse(CrudeRate > EASR, 1, 0)) %>%
+  mutate(EU_binary = factor(EU_binary))
+
+# Split data (stratified to maintain positive/negative balance)
+set.seed(2323)
+mortality_ca_map_split <- initial_split(mortality_ca_map, strata = EU_binary)
+mortality_ca_map_train <- training(mortality_ca_map_split)
+mortality_ca_map_test  <- testing(mortality_ca_map_split)
+
+# Recipes
+mortality_ca_rec1 <- recipe(EU_binary ~ hectares + Diagnosis + Year,
+                             data = mortality_ca_map_train) %>%
+  step_dummy(all_nominal_predictors())
+
+mortality_ca_rec2 <- recipe(EU_binary ~ size_type + Diagnosis + Year,
+                             data = mortality_ca_map_train) %>%
+  step_dummy(all_nominal_predictors())
+
+mortality_ca_rec3 <- recipe(EU_binary ~ CA + Diagnosis + Year,
+                             data = mortality_ca_map_train) %>%
+  step_dummy(all_nominal_predictors())
+
+# Logistic regression model
+mortality_ca_mod <- logistic_reg() %>% set_engine("glm")
+
+# Workflows
+mortality_ca_workflow1 <- workflow() %>% add_model(mortality_ca_mod) %>% add_recipe(mortality_ca_rec1)
+mortality_ca_workflow2 <- workflow() %>% add_model(mortality_ca_mod) %>% add_recipe(mortality_ca_rec2)
+mortality_ca_workflow3 <- workflow() %>% add_model(mortality_ca_mod) %>% add_recipe(mortality_ca_rec3)
+
+# Fit models
+ca_fit1 <- mortality_ca_workflow1 %>% fit(data = mortality_ca_map_train)
+ca_fit2 <- mortality_ca_workflow2 %>% fit(data = mortality_ca_map_train)
+ca_fit3 <- mortality_ca_workflow3 %>% fit(data = mortality_ca_map_train)
+
+# Predict probabilities
+pred1 <- predict(ca_fit1, mortality_ca_map_test, type = "prob") %>% bind_cols(mortality_ca_map_test)
+pred2 <- predict(ca_fit2, mortality_ca_map_test, type = "prob") %>% bind_cols(mortality_ca_map_test)
+pred3 <- predict(ca_fit3, mortality_ca_map_test, type = "prob") %>% bind_cols(mortality_ca_map_test)
+
+# ROC curves (positive class = 1, above EU average)
+roc1 <- roc_curve(pred1, truth = EU_binary, .pred_1, event_level = "second")
+roc2 <- roc_curve(pred2, truth = EU_binary, .pred_1, event_level = "second")
+roc3 <- roc_curve(pred3, truth = EU_binary, .pred_1, event_level = "second")
+
+# Plot ROC curves individually
+autoplot(roc1)
+autoplot(roc2)
+autoplot(roc3)
+
+# Compute AUCs
+mortality_auc1 <- pred1 %>% roc_auc(truth = EU_binary, .pred_1, event_level = "second")
+mortality_auc2 <- pred2 %>% roc_auc(truth = EU_binary, .pred_1, event_level = "second")
+mortality_auc3 <- pred3 %>% roc_auc(truth = EU_binary, .pred_1, event_level = "second")
+
+# Print AUCs
+mortality_auc1
+mortality_auc2
+mortality_auc3
+```
+
