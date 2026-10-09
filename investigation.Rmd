@@ -1,6 +1,7 @@
 ---
 title: "IDS investigation worksheet"
-author: "KESC: Kirin Bhatnagar (s2778182), Elif Naz Kartal (s2791458), Shaun Gallacher (s2830596), & Collin Megson (s2829727)"
+author: ""
+# names removed for privacy reasons
 date: "`r Sys.Date()`"
 output: html_document
 ---
